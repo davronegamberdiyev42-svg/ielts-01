@@ -1,0 +1,307 @@
+
+name: Build and Deploy IELTS Boost
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and verify IELTS Boost
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Assemble platform and verify SHA256
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import hashlib
+          import shutil
+          import sys
+          import re
+          import zipfile
+
+          repo = Path.cwd()
+          manifest = repo / "SHA256SUMS.txt"
+          output = repo / "build-output" / "ielts-01"
+
+          empty_hash = hashlib.sha256(b"").hexdigest()
+
+          if not manifest.is_file():
+              sys.exit("ERROR: SHA256SUMS.txt topilmadi.")
+
+          if output.parent.exists():
+              shutil.rmtree(output.parent)
+
+          output.mkdir(parents=True, exist_ok=True)
+
+          print("1. Repository fayllari tekshirilmoqda...")
+
+          candidates = {}
+
+          for path in repo.rglob("*"):
+              if not path.is_file():
+                  continue
+
+              relative = path.relative_to(repo)
+
+              if relative.parts[0] in {
+                  ".git",
+                  ".github",
+                  "build-output"
+              }:
+                  continue
+
+              digest = hashlib.sha256(
+                  path.read_bytes()
+              ).hexdigest()
+
+              key = (path.name, digest)
+              candidates.setdefault(key, []).append(path)
+
+          print("2. Manifest o'qilmoqda...")
+
+          entries = []
+          seen_targets = set()
+
+          for line_number, raw in enumerate(
+              manifest.read_text(encoding="utf-8-sig").splitlines(),
+              1
+          ):
+              line = raw.strip()
+
+              if not line or line.startswith("#"):
+                  continue
+
+              parts = line.split(maxsplit=1)
+
+              if len(parts) != 2:
+                  sys.exit(
+                      f"ERROR: Manifest formati noto'g'ri: {line_number}"
+                  )
+
+              expected, filename = parts
+              filename = filename.lstrip("*").strip()
+
+              if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+                  sys.exit(
+                      f"ERROR: SHA256 noto'g'ri: {filename}"
+                  )
+
+              target_rel = Path(filename)
+
+              if (
+                  target_rel.is_absolute()
+                  or ".." in target_rel.parts
+                  or not target_rel.parts
+              ):
+                  sys.exit(
+                      f"ERROR: Xavfsiz bo'lmagan yo'l: {filename}"
+                  )
+
+              target_key = target_rel.as_posix()
+
+              if target_key in seen_targets:
+                  sys.exit(
+                      f"ERROR: Takroriy yo'l: {target_key}"
+                  )
+
+              seen_targets.add(target_key)
+              entries.append((expected.lower(), target_rel))
+
+          if not entries:
+              sys.exit("ERROR: Manifest bo'sh.")
+
+          print(f"3. {len(entries)} ta fayl yig'ilmoqda...")
+
+          missing = []
+
+          for expected, target_rel in entries:
+              target = output / target_rel
+              target.parent.mkdir(parents=True, exist_ok=True)
+
+              if (
+                  target_rel.as_posix() == ".nojekyll"
+                  and expected == empty_hash
+              ):
+                  target.write_bytes(b"")
+                  continue
+
+              matches = candidates.get(
+                  (target_rel.name, expected),
+                  []
+              )
+
+              if not matches:
+                  missing.append(target_rel.as_posix())
+                  continue
+
+              chosen = next(
+                  (
+                      p for p in matches
+                      if p.relative_to(repo).as_posix()
+                      == target_rel.as_posix()
+                  ),
+                  None
+              )
+
+              if chosen is None:
+                  chosen = next(
+                      (
+                          p for p in matches
+                          if len(p.relative_to(repo).parts) == 1
+                      ),
+                      None
+                  )
+
+              if chosen is None:
+                  chosen = sorted(
+                      matches,
+                      key=lambda p: (
+                          len(p.relative_to(repo).parts),
+                          p.as_posix()
+                      )
+                  )[0]
+
+              shutil.copy2(chosen, target)
+
+          if missing:
+              print("ERROR: Fayllar topilmadi yoki hash mos emas:")
+
+              for name in missing:
+                  print(" - " + name)
+
+              sys.exit(1)
+
+          shutil.copy2(
+              manifest,
+              output / "SHA256SUMS.txt"
+          )
+
+          print("4. SHA256 qayta tekshirilmoqda...")
+
+          errors = []
+
+          for expected, relative in entries:
+              target = output / relative
+
+              if not target.is_file():
+                  errors.append(
+                      f"Fayl yo'q: {relative.as_posix()}"
+                  )
+                  continue
+
+              actual = hashlib.sha256(
+                  target.read_bytes()
+              ).hexdigest()
+
+              if actual != expected:
+                  errors.append(
+                      f"Hash mos emas: {relative.as_posix()}"
+                  )
+
+          required_files = [
+              "index.html",
+              "sw.js",
+              "manifest.webmanifest",
+              "icons/icon-192.png",
+              "icons/icon-512.png",
+              "assets/css/app-core.css",
+              "assets/css/stage40-50.css",
+              "assets/css/stage51.css",
+              "assets/css/stage56.css",
+              "assets/js/core/contract.js",
+              "assets/js/core/module-registry.js",
+              "assets/js/core/boot.js",
+              "assets/js/compat/legacy-core.js",
+              "assets/js/modules/backup-manager.js",
+              "assets/js/modules/advanced-studio.js",
+              "data/app-data.json",
+              ".nojekyll"
+          ]
+
+          print("5. Asosiy platforma fayllari tekshirilmoqda...")
+
+          for filename in required_files:
+              if not (output / filename).is_file():
+                  errors.append(
+                      f"Asosiy fayl yo'q: {filename}"
+                  )
+
+          if errors:
+              print("BUILD FAILED:")
+
+              for error in errors:
+                  print(" - " + error)
+
+              sys.exit(1)
+
+          print("SUCCESS: SHA256 tekshiruvi o'tdi.")
+          print("SUCCESS: .nojekyll yaratildi.")
+          print("SUCCESS: Asosiy fayllar topildi.")
+
+          print("6. ZIP yaratilmoqda...")
+
+          zip_path = output.parent / "ielts-01-final.zip"
+
+          with zipfile.ZipFile(
+              zip_path,
+              "w",
+              compression=zipfile.ZIP_DEFLATED,
+              compresslevel=6
+          ) as archive:
+
+              for path in sorted(output.rglob("*")):
+                  if path.is_file():
+                      archive.write(
+                          path,
+                          path.relative_to(output).as_posix()
+                      )
+
+          print("SUCCESS: ZIP tayyor.")
+          print(
+              "ZIP hajmi: "
+              f"{zip_path.stat().st_size / (1024 * 1024):.2f} MB"
+          )
+
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: build-output/ielts-01
+
+      - name: Upload final ZIP backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: ielts-01-final-zip
+          path: build-output/ielts-01-final.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
