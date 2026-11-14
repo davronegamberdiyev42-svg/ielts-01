@@ -1,0 +1,108 @@
+name: Build IELTS-01 Final ZIP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get source repository
+        run: |
+          git clone --depth 1 https://github.com/davronegamberdiyev42-svg/final-sss.git source
+
+      - name: Rebuild the intended folder structure and create ZIP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, shutil, zipfile, sys
+
+          src = Path("source")
+          out = Path("ielts-01-build")
+          out.mkdir()
+
+          manifest = src / "SHA256SUMS.txt"
+          if not manifest.exists():
+              raise SystemExit("ERROR: SHA256SUMS.txt topilmadi")
+
+          entries = []
+          for line in manifest.read_text(encoding="utf-8").splitlines():
+              line = line.strip()
+              if not line:
+                  continue
+              parts = line.split(None, 1)
+              if len(parts) != 2:
+                  raise SystemExit(f"Manifest qatori noto'g'ri: {line}")
+              expected, rel = parts[0], parts[1].strip()
+              entries.append((expected, rel))
+
+          def digest(path):
+              h = hashlib.sha256()
+              with path.open("rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          # Copy every manifest entry to its declared destination path.
+          for expected, rel in entries:
+              target = out / rel
+              if target.exists() and digest(target) == expected:
+                  continue
+
+              candidates = []
+              for p in src.rglob("*"):
+                  if not p.is_file() or ".git" in p.parts:
+                      continue
+                  if p.name == Path(rel).name and digest(p) == expected:
+                      candidates.append(p)
+
+              if not candidates:
+                  raise SystemExit(f"ERROR: Manba topilmadi yoki checksum mos emas: {rel}")
+
+              # Prefer the repository-root source when present.
+              root_candidate = src / Path(rel).name
+              source_file = root_candidate if root_candidate in candidates else candidates[0]
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source_file, target)
+
+          # Keep the essential root entry points and deployment files.
+          root_files = [
+              ".nojekyll", "index.html", "sw.js", "manifest.webmanifest",
+              "release-check.html", "standalone.html", "favicon.svg",
+              "README.md", "SHA256SUMS.txt"
+          ]
+          for name in root_files:
+              p = src / name
+              if p.is_file():
+                  shutil.copy2(p, out / name)
+
+          # Final checksum audit: every manifest destination must match.
+          failures = []
+          for expected, rel in entries:
+              p = out / rel
+              if not p.is_file() or digest(p) != expected:
+                  failures.append(rel)
+          if failures:
+              raise SystemExit("CHECKSUM FAIL: " + ", ".join(failures))
+
+          zip_path = Path("ielts-01.zip")
+          with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+              for p in sorted(out.rglob("*")):
+                  if p.is_file():
+                      z.write(p, p.relative_to(out).as_posix())
+
+          print(f"SUCCESS: {len(entries)} manifest entries verified")
+          print(f"ZIP created: {zip_path} ({zip_path.stat().st_size} bytes)")
+          PY
+
+      - name: Publish ZIP as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ielts-01-final-zip
+          path: ielts-01.zip
+          if-no-files-found: error
+          retention-days: 30
