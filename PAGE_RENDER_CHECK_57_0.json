@@ -1,0 +1,30 @@
+{
+  "release": "57.0.0-final-release",
+  "title": "IELTS Boost · Stage 57 · Final Release",
+  "boot_ready": true,
+  "boot_release": "57.0.0",
+  "style_sheets": [
+    "./assets/css/app-core.css",
+    "./assets/css/stage40-50.css",
+    "./assets/css/stage51.css",
+    "./assets/css/stage56.css"
+  ],
+  "computed_style_evidence": {
+    "body_background_color": "rgb(243, 246, 251)",
+    "topbar_display": "flex",
+    "topbar_background_color": "rgba(255, 255, 255, 0.92)",
+    "card_background_color": "rgb(255, 255, 255)",
+    "card_border_radius": "18px"
+  },
+  "game_arena_heading": "STAGE 57 · ADAPTIVE GAME ENGINE",
+  "viewport": {
+    "width_css_px": 390,
+    "document_scroll_width_css_px": 390,
+    "horizontal_overflow": false
+  },
+  "page_errors": 0,
+  "console_errors": 0,
+  "failed_asset_requests": 0,
+  "pass": true,
+  "method": "Chromium DOM rendering using exact package bytes routed under /final-sss/. This is not a live public GitHub Pages visit; the document uses an opaque test origin."
+}

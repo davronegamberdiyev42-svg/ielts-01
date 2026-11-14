@@ -1,0 +1,11 @@
+{
+  "files": 84,
+  "decoded_ok": 84,
+  "decode_errors": [],
+  "total_duration_seconds": 14383.99,
+  "hours": 4.0,
+  "min_duration_seconds": 156.67,
+  "max_duration_seconds": 192.26,
+  "method": "FFmpeg full decode using -v error -xerror on each MP3; ffprobe used for duration metadata.",
+  "pass": true
+}
